@@ -1,7 +1,7 @@
 # final_project_ece3824
 
 My idea for this project is to make an electromyography (EMG) using:
-- A raspberry pi
+- A Raspberry Pi
 - ADS1115 ADC Module
 - Myoware muscle sensor kit
 - OLED display
