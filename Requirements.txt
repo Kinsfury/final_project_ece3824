@@ -1,0 +1,8 @@
+# Solar Tracker – Python dependencies
+# Install on the Pi with:
+# pip install -r requirements.txt --break-system-packages
+ 
+flask>=3.0
+pi-ina219>=1.4.1 # INA219 sensor driver
+luma.oled>=3.13 # OLED display (SSD1306)
+Pillow>=10.0 # Required by luma for font rendering
