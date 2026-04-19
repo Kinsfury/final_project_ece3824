@@ -1,8 +1,13 @@
 # Solar Tracker – Python dependencies
-# Install on the Pi with:
-# pip install -r requirements.txt --break-system-packages
+# On the Pi: pip install -r requirements.txt --break-system-packages
+# On the web host: pip install -r requirements.txt (Railway/Render do this automatically)
  
 flask>=3.0
-pi-ina219>=1.4.1 # INA219 sensor driver
-luma.oled>=3.13 # OLED display (SSD1306)
-Pillow>=10.0 # Required by luma for font rendering
+psycopg2-binary>=2.9 # PostgreSQL driver (binary = no compile step needed)
+python-dotenv>=1.0 # Loads .env file
+gunicorn>=21.0 # Production WSGI server (used by Railway/Render)
+ 
+# Pi-only hardware libraries (safe to install on the server too — they just won't activate)
+pi-ina219>=1.4.1
+luma.oled>=3.13
+Pillow>=10.0
