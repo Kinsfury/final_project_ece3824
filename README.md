@@ -1,25 +1,266 @@
 # final_project_ece3824
 
-My idea for this project is to make a solar tracker using:
-- A Raspberry Pi 3
-- INA219 current sensor
-- OLED display
-- Mini Solar Panel (5V, 200mA)
-- Breadboard
-- Connector cables
+A Raspberry Pi 3 based solar tracking system that measures how long the sun is out each day using a mini solar panel and INA219 current sensor. Readings are taken every 30 seconds, stored in a cloud PostgreSQL database (Supabase), and displayed on a live web dashboard built with Flask and Plotly.
 
-The idea behind this project is to track the length of time the sun is out for on a given day, as a result this will have to run at an extended period of time with the raspberry pi constantly running data to the database. The purpose of the database in this case is to hold all of the data from each day that the tracker is running for. Seven days worth of data will be stored until the pi starts cycling out data for new data. Once the seven day max is hit, once the eighth day starts (at 12 midnight), the data from the first day will be completely erased and so on, in other words purging at midnight. If the raspberry pi loses power for any reason, the experiment will have to be reset manually as the Pi has to reboot completely. A successful run of this shows that after 7 days of operation, there will be a graphical display that shows the amount of time the sun is out for along with how much voltage, current, etc. is taken.
+---
 
-Small solar panels are very sensitive to light, this is good since it will give an accurate reading on whether sunlight is being detected. For the sake of this project, any voltage less than 1V will not be counted as sunlight otherwise it will be counted as sunlight. Something worth note is the INA219 has a shunt value resistance of .1 Ohms, which will affect the measured current values. Since readings occur every 30 seconds, each reading above 1V will count as 30 seconds of daylight, this will be factored into the amount of time the sun has been up for.
+## Hardware
 
-The OLED will display the last reading's time stamp and the estimated length of time the sun has been up for (Voltage greater than 1V)
+| Component | Purpose | Notes |
+|-----------|---------|-------|
+| Raspberry Pi 3 | Main compute unit | Requires stable power and internet |
+| INA219 Current Sensor | Measures voltage, current, power | Shunt: 0.1Ω — I2C address 0x40 |
+| SSD1306 OLED Display | Shows last timestamp and daily sun time | 128×64px — I2C address 0x3C |
+| Mini Solar Panel (5V 200mA) | Light source / energy input | Sensitive enough for accurate sunlight detection |
+| Breadboard + Jumper Cables | Connects components | Standard breadboard wiring |
 
-Data collection will occur every 30 seconds where there will be a snapshot of the voltage being picked up by the solar panel every 30 seconds, sent to the database, and will be displayed on the website.
+## Software Stack
 
-The frontend of the website will show a graph of the current time of the data taken and how much voltage the solar tracker has picked up at the time. It will also give a comparison chart of previous days. It will display the total daily sun hours as a bar chart across all stored days, allowing trends to be seen at a glance.
+| Layer | Technology | Role |
+|-------|-----------|------|
+| Data Collection | Python + pi-ina219 | Reads sensor every 30 seconds on the Pi |
+| Database | Supabase (PostgreSQL) | Cloud-hosted, stores all readings |
+| Web Server | Flask + Gunicorn | Serves the dashboard and JSON API |
+| Charts | Plotly.js | Interactive voltage timeline and sun-hours bar chart |
+| Deployment | Railway / Render | Hosts the Flask app publicly |
+| Version Control | Git + GitHub | Syncs code between Pi and cloud |
 
-The code will be written in python, it will be the easiest to write communication code between the website and the pi and writing code for the INA219 is very seamless. The database I plan on using will be the SQLite since it is lightweight for a Raspberry Pi 3. The plot for the data will show all of the points taken, once the mouse hovers over a point you will then be shown more details for how much voltage, current, power, etc that is generated. Plotly will be used as the graphical tool here since there is minimal work required to build in hover details.
+---
 
-Flask will be used as the website's framework, using periodic polling to update in real time. This means that flask backend queries SQLite every 30 seconds and serves the data as a JSON API endpoint to match the collection rate, which the frontend fetches and renders with Plotly. Flask exposes a /data endpoint that returns the last 7 days of readings as a JSON array. The SQLite database will use a single table with columns for id, timestamp, voltage_v, current_ma, and power_mw.
+## How It Works
 
-All of the materials are already in hand, there is no need for funding.
+Three independent components communicate only through the shared database:
+
+- **Raspberry Pi** runs `collector.py`, reads the INA219 every 30 seconds, and writes each reading to Supabase over the internet
+- **Supabase (PostgreSQL)** is the central data store — both the Pi and the web server connect to it independently
+- **Flask web server** (hosted on Railway/Render) reads from Supabase and serves the dashboard — the browser polls `/data` every 30 seconds for live updates
+
+Any voltage reading at or above **1.0V** counts as active sunlight. Each such reading adds 30 seconds to the daily sun counter. Seven days of data are retained at any time — at midnight the oldest day is purged automatically. If the Pi loses power the experiment must be restarted manually.
+
+---
+
+## Wiring
+
+Both the INA219 and OLED share the same I2C bus — wire them in parallel to the same GPIO pins.
+
+### INA219 → Raspberry Pi
+
+| INA219 Pin | Pi GPIO | Pi Physical Pin |
+|-----------|---------|----------------|
+| VCC | 3.3V | Pin 1 |
+| GND | GND | Pin 6 |
+| SDA | GPIO 2 (SDA) | Pin 3 |
+| SCL | GPIO 3 (SCL) | Pin 5 |
+
+**Solar panel:** Positive lead → INA219 VIN+, INA219 VIN- → load or GND.
+
+### SSD1306 OLED → Raspberry Pi
+
+| OLED Pin | Pi GPIO | Pi Physical Pin |
+|---------|---------|----------------|
+| VCC | 3.3V | Pin 1 |
+| GND | GND | Pin 9 |
+| SDA | GPIO 2 (SDA) | Pin 3 |
+| SCL | GPIO 3 (SCL) | Pin 5 |
+
+### Enable I2C
+
+```bash
+sudo raspi-config
+# Interface Options → I2C → Enable → Finish
+sudo reboot
+
+# Verify both devices are detected
+sudo i2cdetect -y 1
+# Should show 0x3C (OLED) and 0x40 (INA219)
+```
+
+---
+
+## Setup
+
+### 1. Supabase Database
+
+1. Go to [supabase.com](https://supabase.com) and create a free account
+2. Create a new project and set a database password
+3. Go to **Project Settings → Database → Connection String → URI**
+4. Copy the connection string — replace `[YOUR-PASSWORD]` with your actual password:
+   ```
+   postgresql://postgres:yourpassword@db.xxxx.supabase.co:5432/postgres
+   ```
+
+The `readings` table is created automatically the first time `collector.py` runs.
+
+### 2. Raspberry Pi
+
+```bash
+# Enable I2C first (see Wiring section above)
+
+# Install dependencies
+sudo apt update && sudo apt install -y python3-pip i2c-tools git
+pip install -r requirements.txt --break-system-packages
+
+# Set up SSH key for GitHub
+ssh-keygen -t ed25519 -C "your@email.com"
+cat ~/.ssh/id_ed25519.pub   # copy this to GitHub → Settings → SSH Keys
+ssh -T git@github.com       # test connection
+
+# Clone the repo
+git clone git@github.com:yourname/your-repo-name.git
+cd your-repo-name
+
+# Create the environment file
+nano .env
+# Add this line:
+# DATABASE_URL=postgresql://postgres:yourpassword@db.xxxx.supabase.co:5432/postgres
+
+# Test the database connection
+python3 -c "import psycopg2; psycopg2.connect('your-database-url'); print('Connected!')"
+```
+
+### 3. Run the Collector
+
+```bash
+python collector.py
+```
+
+**Auto-start on boot** — save as `/etc/systemd/system/solar-collector.service`:
+
+```ini
+[Unit]
+Description=Solar Tracker Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/your-repo-name
+EnvironmentFile=/home/pi/your-repo-name/.env
+ExecStart=/usr/bin/python3 /home/pi/your-repo-name/collector.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now solar-collector
+sudo systemctl status solar-collector
+```
+
+### 4. Deploy to Railway
+
+1. Push code to GitHub (see Git section below first)
+2. Go to [railway.app](https://railway.app) → sign in with GitHub
+3. New Project → Deploy from GitHub repo → select your repo
+4. Railway detects the `Procfile` and runs `gunicorn app:app` automatically
+5. Go to your service → **Variables** tab → add `DATABASE_URL`
+6. Railway gives you a public HTTPS URL — that's your live dashboard
+
+---
+
+## Environment Variables
+
+Create a `.env` file in the project root (never commit this):
+
+```
+DATABASE_URL=postgresql://postgres:yourpassword@db.xxxx.supabase.co:5432/postgres
+```
+
+On Railway/Render, set this as an environment variable in the dashboard instead.
+
+---
+
+## Database Schema
+
+Single table — created automatically on first run:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | SERIAL PRIMARY KEY | Auto-incrementing ID |
+| timestamp | TIMESTAMPTZ | When the reading was taken (UTC) |
+| voltage_v | REAL | Voltage in volts |
+| current_ma | REAL | Current in milliamps |
+| power_mw | REAL | Power in milliwatts |
+
+---
+
+## Configuration
+
+All tunable constants are at the top of `collector.py`:
+
+| Constant | Default | Description |
+|---------|---------|-------------|
+| `SUNLIGHT_THRESHOLD_V` | `1.0` | Minimum voltage counted as sunlight |
+| `POLL_INTERVAL` | `30` | Seconds between readings |
+| `MAX_DAYS` | `7` | Days of data retained |
+| `SHUNT_OHMS` | `0.1` | INA219 shunt resistor value |
+| `OLED_ADDRESS` | `0x3C` | I2C address of OLED |
+| `INA_ADDRESS` | `0x40` | I2C address of INA219 |
+
+---
+
+## Git Workflow
+
+```bash
+# Before your first push — make sure .gitignore is correct
+cat .gitignore
+# Should contain: .env, .env~, *.log, __pycache__/, solar.db
+
+# Remove .env if it was accidentally tracked
+git rm --cached .env
+git rm --cached .env~
+
+# Verify .env does not appear, then push
+git status
+git add .
+git commit -m "initial commit"
+git push
+```
+
+**Ongoing changes:**
+
+```bash
+git add .
+git commit -m "describe what changed"
+git push   # Railway redeploys automatically
+```
+
+---
+
+## Network Notes
+
+Campus Wi-Fi often blocks the Pi due to MAC address registration or captive portals. The most reliable option is a **phone hotspot**. If the hotspot has internet but Supabase still fails, your carrier may be blocking port 5432. Test with:
+
+```bash
+nc -zv db.yourref.supabase.co 5432   # primary port
+nc -zv db.yourref.supabase.co 6543   # pooler port (try this if 5432 fails)
+```
+
+If both are blocked, use the connection pooler URL from Supabase (port 6543) or switch to a home Wi-Fi router which has no port restrictions.
+
+---
+
+## Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Could not determine default I2C bus` | I2C library can't auto-detect platform | Pass `busnum=1` explicitly: `INA219(..., busnum=1)` |
+| `Network is unreachable` (psql/nc) | Carrier blocking port 5432/6543 | Try port 6543 pooler URL, or switch to home Wi-Fi |
+| Default keyring prompt on Wi-Fi | OS keychain asking for master password | Leave blank and press Enter, or edit `wpa_supplicant.conf` directly |
+| `.env` appearing in `git status` | File already tracked before `.gitignore` was added | Run `git rm --cached .env` |
+| `Connection refused` on dashboard | Gunicorn bound to `127.0.0.1` not `0.0.0.0` | Restart with `gunicorn -b 0.0.0.0:8000 app:app` |
+| Campus Wi-Fi refuses Pi connection | MAC not registered on university network | Use phone hotspot or contact IT to whitelist Pi MAC address |
+
+---
+
+## Design Notes
+
+- **Power loss** resets the experiment. The Pi has no RTC battery so timestamps depend on NTP sync after reboot. An optional DS3231 RTC module can fix this.
+- **Sun time accuracy** is bounded by the 30-second poll interval — maximum error is ±30 seconds per reading.
+- **INA219 shunt** of 0.1Ω is handled internally by the `pi-ina219` library, which returns current in mA directly.
+- **Supabase free tier** allows 500MB storage — sufficient for ~2,880 readings per week at 30-second intervals.
+- The `.env` file must be created manually on each new device since it is excluded from Git.
